@@ -1,0 +1,11 @@
+prefix=${pcfiledir}/@INFERLET_PC_PREFIX_RELATIVE@
+exec_prefix=${prefix}
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: Inferlet
+Description: High-performance LLM inference library based on llama.cpp
+Version: @PROJECT_VERSION@
+Cflags: -I${includedir} @PC_SANITIZER_CFLAGS@
+Libs: -L${libdir} -linferlet @PC_SANITIZER_LDFLAGS@
+Libs.private: @PC_OPENMP_LIBS@ -lpthread -ldl -lm -lstdc++ @PC_SANITIZER_LDFLAGS@

@@ -1,0 +1,218 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: "Create a GitHub Release (publishes to Releases tab)"
+        required: false
+        type: boolean
+        default: false
+      tag_name:
+        description: "Release tag name (e.g. v0.1.0)"
+        required: false
+        type: string
+        default: "v0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "Linux x86_64"
+            target: "x64"
+            arch_dir: "x64"
+            os: ubuntu-latest
+            cross: false
+            run_tests: true
+
+          - name: "Linux ARM64"
+            target: "arm"
+            arch_dir: "arm"
+            os: ubuntu-latest
+            cross: true
+            run_tests: false
+
+          - name: "macOS"
+            target: "mac"
+            arch_dir: "mac"
+            os: macos-latest
+            cross: false
+            run_tests: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build build-essential
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          fi
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake ninja
+
+      - name: Configure CMake
+        run: |
+          EXTRA_ARGS=""
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            AR_BIN=$(which aarch64-linux-gnu-ar)
+            RANLIB_BIN=$(which aarch64-linux-gnu-ranlib)
+            CC_BIN=$(which aarch64-linux-gnu-gcc)
+            CXX_BIN=$(which aarch64-linux-gnu-g++)
+            EXTRA_ARGS="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 -DCMAKE_C_COMPILER=${CC_BIN} -DCMAKE_CXX_COMPILER=${CXX_BIN} -DCMAKE_AR=${AR_BIN} -DCMAKE_RANLIB=${RANLIB_BIN} -DINFERLET_BUILD_TESTS=OFF"
+          else
+            EXTRA_ARGS="-DINFERLET_BUILD_TESTS=ON"
+          fi
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DINFERLET_ARCH_DIR="${{ matrix.arch_dir }}" \
+            $EXTRA_ARGS
+
+      - name: Build Inferlet
+        run: |
+          cmake --build build --config Release
+
+      - name: Run Unit & ABI Tests
+        if: matrix.run_tests
+        run: |
+          ctest --test-dir build --output-on-failure -R "abi_|unit_"
+
+      - name: Package artifacts
+        run: |
+          PACKAGE_NAME="inferlet-${{ matrix.target }}"
+          STAGING_DIR="staging/${PACKAGE_NAME}"
+          cmake --install build --prefix "${STAGING_DIR}"
+
+          # Ensure the library is located under lib/<arch>/ subdirectory
+          mkdir -p "${STAGING_DIR}/lib/${{ matrix.arch_dir }}"
+          if [ -f "${STAGING_DIR}/lib/libinferlet.a" ]; then
+            cp "${STAGING_DIR}/lib/libinferlet.a" "${STAGING_DIR}/lib/${{ matrix.arch_dir }}/"
+          fi
+
+          mkdir -p dist
+          tar -czvf "dist/${PACKAGE_NAME}.tar.gz" -C staging "${PACKAGE_NAME}"
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${PACKAGE_NAME}.tar.gz" > "${PACKAGE_NAME}.tar.gz.sha256"
+          else
+            shasum -a 256 "${PACKAGE_NAME}.tar.gz" > "${PACKAGE_NAME}.tar.gz.sha256"
+          fi
+
+      - name: Upload artifact to workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: inferlet-${{ matrix.target }}
+          path: dist/*
+          retention-days: 14
+
+  bundle:
+    name: Package Unified Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release_assets
+          merge-multiple: true
+
+      - name: Prepare Unified Release Bundle
+        run: |
+          mkdir -p release_dist
+          mkdir -p /tmp/unpack
+
+          # Copy individual packages
+          cp release_assets/*.tar.gz release_dist/ 2>/dev/null || true
+
+          # Unpack each
+          tar -xzf release_dist/inferlet-x64.tar.gz -C /tmp/unpack/
+          tar -xzf release_dist/inferlet-arm.tar.gz -C /tmp/unpack/
+          tar -xzf release_dist/inferlet-mac.tar.gz -C /tmp/unpack/
+
+          # Build unified multi-platform release: inferlet-release.tar.gz
+          # Structure:
+          # inferlet/
+          #   include/inferlet.h
+          #   lib/
+          #     x64/libinferlet.a
+          #     arm/libinferlet.a
+          #     mac/libinferlet.a
+          mkdir -p unified_bundle/inferlet/include
+          mkdir -p unified_bundle/inferlet/lib/x64
+          mkdir -p unified_bundle/inferlet/lib/arm
+          mkdir -p unified_bundle/inferlet/lib/mac
+
+          cp -r /tmp/unpack/inferlet-x64/include/* unified_bundle/inferlet/include/
+          cp /tmp/unpack/inferlet-x64/lib/x64/libinferlet.a unified_bundle/inferlet/lib/x64/
+          cp /tmp/unpack/inferlet-arm/lib/arm/libinferlet.a unified_bundle/inferlet/lib/arm/
+          cp /tmp/unpack/inferlet-mac/lib/mac/libinferlet.a unified_bundle/inferlet/lib/mac/
+          cp -r /tmp/unpack/inferlet-x64/share unified_bundle/inferlet/ 2>/dev/null || true
+
+          tar -czvf release_dist/inferlet-release.tar.gz -C unified_bundle inferlet
+
+          cd release_dist
+          sha256sum *.tar.gz > SHA256SUMS.txt
+          echo "=== Final Release Assets ==="
+          ls -lh
+          echo "=== Checksums ==="
+          cat SHA256SUMS.txt
+
+      - name: Upload Unified Release Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: inferlet-all-platforms
+          path: release_dist/*
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: bundle
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+    steps:
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: inferlet-all-platforms
+          path: release_dist
+
+      - name: Determine Release Tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag_name=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag_name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag_name }}
+          name: "Inferlet ${{ steps.tag.outputs.tag_name }}"
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            release_dist/*.tar.gz
+            release_dist/SHA256SUMS.txt

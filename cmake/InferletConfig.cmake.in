@@ -1,0 +1,56 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Required runtime dependencies
+find_dependency(Threads)
+if(@INFERLET_HAS_OPENMP@)
+    find_dependency(OpenMP)
+endif()
+
+# Include target exports
+include("${CMAKE_CURRENT_LIST_DIR}/InferletTargets.cmake")
+
+# Propagate system libraries to the imported target
+if(@INFERLET_HAS_OPENMP@)
+    if(TARGET OpenMP::OpenMP_CXX)
+        set_property(TARGET Inferlet::Inferlet APPEND PROPERTY
+            INTERFACE_LINK_LIBRARIES "OpenMP::OpenMP_CXX"
+        )
+    elseif(TARGET OpenMP::OpenMP_C)
+        set_property(TARGET Inferlet::Inferlet APPEND PROPERTY
+            INTERFACE_LINK_LIBRARIES "OpenMP::OpenMP_C"
+        )
+    endif()
+endif()
+
+set_property(TARGET Inferlet::Inferlet APPEND PROPERTY
+    INTERFACE_LINK_LIBRARIES "Threads::Threads;${CMAKE_DL_LIBS};m"
+)
+
+# For pure C consumers, ensure libstdc++ is linked
+get_property(_inferlet_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+if(NOT "CXX" IN_LIST _inferlet_languages)
+    set_property(TARGET Inferlet::Inferlet APPEND PROPERTY
+        INTERFACE_LINK_LIBRARIES "stdc++"
+    )
+endif()
+
+# Propagate sanitizer flags if library was built with AddressSanitizer
+if(@INFERLET_ENABLE_ASAN@)
+    set_property(TARGET Inferlet::Inferlet APPEND PROPERTY
+        INTERFACE_COMPILE_OPTIONS "-fsanitize=address,undefined"
+    )
+    set_property(TARGET Inferlet::Inferlet APPEND PROPERTY
+        INTERFACE_LINK_OPTIONS "-fsanitize=address,undefined"
+    )
+endif()
+
+if(@INFERLET_ENABLE_TSAN@)
+    set_property(TARGET Inferlet::Inferlet APPEND PROPERTY
+        INTERFACE_COMPILE_OPTIONS "-fsanitize=thread"
+    )
+    set_property(TARGET Inferlet::Inferlet APPEND PROPERTY
+        INTERFACE_LINK_OPTIONS "-fsanitize=thread"
+    )
+endif()

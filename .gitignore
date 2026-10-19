@@ -1,0 +1,10 @@
+build*/
+*.o
+*.a
+*.so
+.vscode/
+compile_commands.json
+models
+Testing/
+staging/
+dist/
