@@ -14,10 +14,10 @@ on:
         type: boolean
         default: false
       tag_name:
-        description: "Release tag name (e.g. v0.1.0)"
+        description: "Release tag name (e.g. v0.1.1)"
         required: false
         type: string
-        default: "v0.1.0"
+        default: "v0.1.1"
 
 permissions:
   contents: write
@@ -116,6 +116,15 @@ jobs:
             sha256sum "${PACKAGE_NAME}.tar.gz" > "${PACKAGE_NAME}.tar.gz.sha256"
           else
             shasum -a 256 "${PACKAGE_NAME}.tar.gz" > "${PACKAGE_NAME}.tar.gz.sha256"
+          fi
+
+      - name: Check portable x86_64 instruction set
+        if: matrix.target == 'x64'
+        run: |
+          # The archive must run on any AVX2 host; AVX-512/AMX code faults with SIGILL elsewhere.
+          if objdump -d staging/inferlet-x64/lib/libinferlet.a | grep -qE '%zmm|%k[0-7]|%tmm'; then
+            echo "libinferlet.a contains AVX-512/AMX instructions" >&2
+            exit 1
           fi
 
       - name: Upload artifact to workflow

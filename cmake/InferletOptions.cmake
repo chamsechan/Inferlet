@@ -27,6 +27,9 @@ set(LLAMA_TESTS_INSTALL OFF CACHE BOOL "" FORCE)
 set(LLAMA_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
 set(GGML_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
 set(GGML_METAL OFF CACHE BOOL "" FORCE)
+# Distributed static archives must not target the build host CPU; with native
+# off, ggml uses its portable x86-64 baseline (AVX2/FMA/F16C, no AVX-512).
+set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 
 # Inferlet build options
 option(INFERLET_BUILD_TESTS "Build Inferlet tests" OFF)

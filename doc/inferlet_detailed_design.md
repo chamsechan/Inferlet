@@ -990,7 +990,7 @@ JSON 统一使用一份固定版本的 `nlohmann/json`（MIT、header-only）或
 
 ```cmake
 cmake_minimum_required(VERSION 3.20)
-project(Inferlet VERSION 0.1.0 LANGUAGES C CXX)
+project(Inferlet VERSION 0.1.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
